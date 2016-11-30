@@ -5,16 +5,11 @@
     <link rel="stylesheet" type="text/css" href="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.css">
     <script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.5/d3.min.js" charset="utf-8"></script>
-    
     <style>
-      #eventSelect {
-        display: inline-block;
-      }
-      #run {
-        display: none;
-        font-size: 12px;
-        margin-left: 10px;
+     #run {
         margin-top:5px;
+        float:left;
+        clear:both;
         padding: 6px 12px;
         background-color: #61adf0;
         background-image: -webkit-linear-gradient(#6ab5f2,#53a0ee);
@@ -28,348 +23,233 @@
         cursor: pointer;
         font-weight: bold;
       }
-      #pathLength {
-        font-family:  system, -apple-system, ".SFNSDisplay-Regular", "Helvetica Neue", sans-serif;
-        font-weight: normal;
-        letter-spacing: 0.03em;
-        font-size: 13px;
-        color: #747d94;
-        height: 20px;
-        width: 50px;
-        margin: 0 0 10px 0;
-        padding: 5px;
-        border: 1px solid #bdc7d2;
-        -webkit-border-radius: 3px;
-        border-radius: 3px;
-        position: relative;
-        -webkit-appearance: textfield;
-        background-color: white;
-      }
-      #pathLength:focus, #pathLength:hover {
-        outline: 0;
-        border-color: #5ba7e1;
-      }
-      .label {
-        margin: 0 10px;
-        display: inline-block;
-      }
-      #flow {
-        width: 100%;
-        overflow-x: scroll;
-      }
 
-      .node {
-        cursor: pointer;
-      }
       .node circle {
         fill: #fff;
         stroke: steelblue;
         stroke-width: 1.5px;
-      }
-      .node text {
+      }se
+
+      .node {
         font: 10px sans-serif;
-        text-overflow: ellipsis;
-        overflow: hidden;
-        white-space: nowrap;
-      }
-      .link {
-        fill: none;
-        stroke: #ccc;
-        stroke-width: 1.5px;
-        stroke-linecap: round;
+
       }
 
+      .link {
+        fill: none;
+        stroke: steelblue;
+        stroke-linecap: round;
+      }
     </style>
   </head>
   <body class="mixpanel-platform-body" style="overflow-x:scroll;">
-      <div id="eventSelect"></div>
-      <div class="label">Max Flow Length:</div>
-      <input id="pathLength" value="4">
-      <button id="run" value="Run">Run</button>
-      <div id="dateRange" style="float: right;"></div>
-      <div id="flow"></div>
+      <div id="eventSelect" style="float: left;"></div>
+      <div id="dateSelect" style="float: right;"></div>
+      <div style="clear: both;"></div>
+      <button id="run" value="Run" style="display: none;">Run</button>
     <script>
+      MP.api.MAX_SIMULTANEOUS_QUERIES = 30
+      var datesSelector = $('#dateSelect').MPDatepicker();
       var rootEventSelect = $('#eventSelect').MPEventSelect();
-      var date = $('#dateRange').MPDatepicker();
+      /* Global Event List */
+      var rootEvent;
+      var objs = {};
+      var graphData = {}
+      
       var params = {
-        from: moment().subtract(29, 'days'),
+        from: moment().subtract(30, 'days'),
         to: moment(),
+        length: 14,
+        limit: 200,
+        interval: 90
       }
-      var cqResult, script, path_length = $('#pathLength').val();
-      $(document).ready(function() {
-        script = $('#cq').html();
-        script = $.trim(script);
-        
-        // d3 tree flow
-        var margin = {top: 20, right: 40, bottom: 20, left: 40},
-            width = 200 * (parseInt(path_length) + 1), //960 - margin.right - margin.left,
-            height = 1220 - margin.top - margin.bottom;
   
-        var i = 0,
-            duration = 750,
-            treeRoot;
+      var width = 960;
+      var height = 750;
+      var cluster = d3.layout.cluster()
+        .size([height, width - 160]);
+      var diagonal = d3.svg.diagonal()
+        .projection(function(d) { return [d.y, d.x]; });
   
-        var tree = d3.layout.tree()
-            .size([height, width]);
-  
-        var diagonal = d3.svg.diagonal()
-            .projection(function(d) { return [d.y, d.x]; });
-  
-        var svg = d3.select("#flow").append("svg")
-            .attr("width", width + margin.right + margin.left)
-            .attr("height", height + margin.top + margin.bottom)
-            .append("g")
-            .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
-  
-        d3.select(self.frameElement).style("height", "800px");
-
-        function createFlow(flowObject) {
-          treeRoot = flowObject;
-          treeRoot.x0 = height / 2;
-          treeRoot.y0 = 0;
-  
-          function collapse(d) {
-            if (d.children) {
-              d._children = d.children;
-              d._children.forEach(collapse);
-              d.children = null;
-            }
-          }
-  
-          treeRoot.children.forEach(collapse);
-          update(treeRoot);      
-        }
-  
-        function update(source) {
-          var flow_length = parseInt(path_length) + 1;
-
-          // Compute the new tree layout.
-          var nodes = tree.nodes(treeRoot).reverse(),
-              links = tree.links(nodes);
-  
-          // Normalize for fixed-depth.
-          nodes.forEach(function(d) { d.y = width / flow_length * d.depth; });
-          
-          // Find max count
-          var maxCount = 0;
-          nodes.forEach(function(d) { if (d.depth > source.depth) maxCount = d.count > maxCount ? d.count : maxCount });
-  
-          var ratio = calculateFlowLine(maxCount);
-  
-          // Update the nodes…
-          var node = svg.selectAll("g.node")
-              .data(nodes, function(d) { return d.id || (d.id = ++i); });
-  
-          // Enter any new nodes at the parent's previous position.
-          var nodeEnter = node.enter().append("g")
-              .attr("class", function(d) {return d.parent ? "node" : "root node" })
-              .attr("transform", function(d) { return "translate(" + source.y0 + "," + source.x0 + ")"; })
-              .style("-webkit-clip-path", "polygon(-3px 0, " + 200 + "px 0, " + 200 + "px 100%, -3px 100%")
-              .style("clip-path", "polygon(-3px 0, " + 200 + "px 0, " + 200 + "px 100%, -3px 100%")
-              .on("click", click);
-  
-          nodeEnter.append("circle")
-              .attr("r", 1e-6)
-              .style("fill", function(d) { return d.selected ? "#fff" : "lightsteelblue"; });
-  
-          nodeEnter.append("text")
-              .attr("dx", 10)
-              .attr("dy", 3)
-              .attr("text-anchor", "start")
-              .text(function(d) { return d.name; })
-              .style("fill-opacity", 1e-6);
-              
-          nodeEnter.append("title")
-              .text(function(d) { return d.name; })
-  
-          // Transition nodes to their new position.
-          var nodeUpdate = node.transition()
-              .duration(duration)
-              .attr("transform", function(d) { return "translate(" + d.y + "," + d.x + ")"; });
-  
-          nodeUpdate.select("circle")
-              .attr("r", 4.5)
-              .style("fill", function(d) { return d.selected ? "#fff" : "lightsteelblue"; });
-  
-          nodeUpdate.select("text")
-              .style("fill-opacity", 1)
-              .style("font-weight", function(d) {return d.selected ? "bold" : "normal"; });
-  
-          // Transition exiting nodes to the parent's new position.
-          var nodeExit = node.exit().transition()
-              .duration(duration)
-              .attr("transform", function(d) { return "translate(" + source.y + "," + source.x + ")"; })
-              .remove();
-  
-          nodeExit.select("circle")
-              .attr("r", 1e-6);
-  
-          nodeExit.select("text")
-              .style("fill-opacity", 1e-6);
-  
-          // Update the links…
-          var link = svg.selectAll("path.link")
-              .data(links, function(d) { return d.target.id; });
-  
-          // Enter any new links at the parent's previous position.
-          link.enter().insert("path", "g")
-              .attr("class", "link")
-              .style("stroke-width", function(d) { 
-                var width = d.target.count * ratio > 1 ? d.target.count * ratio : 1;
-                return width;
+      var svg = d3.select("body").append("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .call(d3.behavior.zoom().on("zoom", function () {
+                svg.attr("transform", "translate(" + d3.event.translate + ")" + " scale(" + d3.event.scale + ")")
               })
-              .attr("d", function(d) {
-                var o = {x: source.x0, y: source.y0};
-                return diagonal({source: o, target: o});
-              });
+            )
+        .append("g")
+        .attr("transform", "translate(40,0)");
   
-          // Transition links to their new position.
-          link.transition()
-              .duration(duration)
-              .attr("d", diagonal);
+      function addNode(data){
   
-          // Transition exiting nodes to the parent's new position.
-          link.exit().transition()
-              .duration(duration)
-              .attr("d", function(d) {
-                var o = {x: source.x, y: source.y};
-                return diagonal({source: o, target: o});
-              })
-              .remove();
+        d3.selectAll(".text").remove();
+        d3.selectAll(".node").remove();
+        d3.selectAll(".link").remove();
   
-          // Stash the old positions for transition.
-          nodes.forEach(function(d) {
-            d.x0 = d.x;
-            d.y0 = d.y;
+        var nodes = cluster.nodes(data),
+          links = cluster.links(nodes);
+  
+        nodes.forEach(function(d) { d.y = d.depth * 180; });
+  
+        var allLinks = svg.selectAll(".link").data(links);
+        var link = allLinks.enter().append("path")
+          .attr("class", "link")
+          .style('stroke-width', function(d) {
+            return ( d.target.root * .2 );
           });
-        }
   
-        // Toggle children on click.
-        function click(d) {
-          if (d.selected) {
-            d._children = d.children;
-            d.children = null;
-            d.selected = false;
-          } else {
-            d.children = d._children;
-            d._children = null;
-            d.selected = true;
-          }
-          update(d);
-        }
-        
-        function date_to_string(d) {
-          return d.toISOString().split('T')[0];
-        }
-        
-        function calculateFlowLine(count) {
-          var count = count || 1;
-          return 15/count;
-        }
-        
-        // UI dropdowns & buttons
-        date.on('change', function(e, dates) {
-          params.from = dates.from;
-          params.to = dates.to;
-        });
-        
-        rootEventSelect.on('change', function(e, Name){
-          $('#run').css('display', 'inline-block');
-        });
-        
-        $('#run').on('click', function(e){
-          path_length = $('#pathLength').val();
-          var rootEvent = rootEventSelect.val();
-          var queryParams = {
-            'from_date': date_to_string(params.from),
-            'to_date': date_to_string(params.to),
-            'first_event': rootEvent,
-            'max_depth': path_length
-          }
-          MP.api.jql(script, queryParams).done(function(results) {
-            cqResult = results[0];
-            mapFlow();
+        allLinks.transition().duration(1000).attr("d", diagonal);
+  
+        var allNodes = svg.selectAll(".node").data(nodes);
+        var node = allNodes.enter().append("g")
+          .attr("class", "node")
+          .attr("transform", function(d) { return "translate(" + d.y + "," + d.x + ")"; })
+          .style('cursor','pointer')
+          .style('opacity', 0.6)
+          .on('mouseover', function(d){
+              d3.select(this).style('opacity', 1.0)
+              d3.select("text").style('opacity', 1.0);
+          })
+          .on('mouseout', function(d){
+            d3.select(this).style('opacity', 0.6)
+          })
+          .on('click', function(val){
+              console.log (val)
+              if (val.children) {
+                val._children = val.children;
+                val.children = null;
+                addNode(graphData)
+              } else if (val._children) {
+                val.children = val._children;
+                addNode(graphData);
+              } else {
+                val._children = true ;
+                nodeQuery(objs, val);
+              }
           });
-        });
-        
-        // flow
-        function mapFlow() {
-          var root = Object.keys(cqResult)[0];
-          var flows = cqResult[root];
-          flowObject = {
-            'name': flows.count + ': ' + root,
-            'count': flows.count,
-            'children': [],
-            'selected': true
-          }
+  
+        node.append('svg:title')
+          .text(function(d) {
+            var count = 'Count: ' + String(d.count) + '\n';
+            var parent = 'Conversion From Parent Event: ' + String(d.conversion) + '%\n';
+            var root = 'Conversion From Root Event: ' + String(d.root) + '%';
+            return count + parent + root });
+        node.append("circle")
+            .attr("r", 4.5);
+  
+        node.append("text")
+          .attr("dx", function(d) { return d.children ? 0 : 8; })
+          .attr("dy", function(d) { return d.children ? 18 : 3; })
+          .text(function(d) { return d.name; })
+          .attr("text-anchor", function(d){
+            return ( d.children ? "middle" : undefined );
+          });
+      };
+  
+      /* Let the Funnel Queries Begin... */
+  
+      var nodeQuery = function(event_list, node){
+        /* Dict with top counts for each event */
+        var nodes = {};
+        var promises = []
           
-          _.each(_.keys(flows.next), function(eventName) {
-            getChildren(flowObject, flows.next[eventName], '', eventName)
-          });
-          createFlow(flowObject);
-        }
-        
-        function getChildren(parentObject, flowParent, prevFlowParent, event) {
-          var next = flowParent.next;
-          var eventObject = {
-            'name': flowParent.count + ': ' + event,
-            'count': flowParent.count,
-            'parent': prevFlowParent,
-            'children': [],
-            'selected': false
-          };
-          
-          if ($.isEmptyObject(next) === false) {
-            for (var eventName in next) {
-              getChildren(eventObject, next[eventName], event, eventName);
-            }
+        _.each(_.keys(event_list), function(key) {
+          var event = event_list[key];
+          var parent = node;
+          var selector_str;
+          var events = [];
+          while (parent){
+            events.push({'event': event});
+            event = parent.name
+            parent = parent.parent
           }
-          parentObject.children.push(eventObject);
-        }
+          events.push({'event': event});
+          events.reverse();
+          events.push(params);
+          promises.push(MP.api.funnel.apply(MP.api, events));
+        });
+
+          Promise.all(promises).then(function(promiseArray){
+            _.each(promiseArray, function(data){
+                total = 0;
+                var length = data.length - 1;
+                _.each(_.values(data[length]), function(funnelObj){ total += funnelObj.count });
+                nodes[_.values(data[length])[0].event] = total;
+            });
+          }).then(function(){
+             /* Add Data to Graph Data */
+             var total = _.values(nodes).reduce(function(a , b){return a + b;});
+  
+             _.each(_.keys(nodes), function(key){
+               /*
+                  Build a node object with the conversion percentage and other meta data and add it to the children
+                  of the parent node
+               */
+                var conversion = Math.floor(nodes[key] / node.count * 100);
+                var root = Math.floor(nodes[key] / graphData.count * 100);
+                if (conversion < 2 ) { return };
+                if (node.children) {
+                    node.children.push({
+                      'name':key,
+                      'root': root,
+                      'conversion': conversion,
+                      'count':nodes[key]
+                    });
+                } else {
+                    node.children = [{
+                      'name':key,
+                      'root': root,
+                      'conversion': conversion,
+                      'count':nodes[key]
+                    }];
+                }
+             })
+             addNode(graphData);
+             console.log(graphData)
+          });
+      }
+      rootEventSelect.on('change', function(e){
+        $('#run').show();
+      })
+      $('#run').on('click', function(e){
+        var rootEvent = rootEventSelect.MPEventSelect('value')
+        var dates = datesSelector.MPDatepicker('value')
         
+        params.from = dates.from;
+        params.to = dates.to;
+        
+        /* This Event Represents the Origin of the User Flow Diagram. */
+        
+        graphData = {
+          'name': rootEvent,
+          'conversion': 100,
+          'root': 100,
+        };
+        
+        var rootParams = {
+          from: params.from,
+          to: params.to,
+          type: 'unique',
+          interval: 32,
+        };
+        
+        /* Top Event Queries */
+        var topEventsParams = {'limit':'30'};
+        var topEvents = MP.api.topEvents(topEventsParams);
+  
+        /* Funnel Queries */
+        $.when(topEvents).done(function(events){
+            objs = events.values();
+        });
+        /* Find the Root Event Count */
+        var rootEventCount = MP.api.segment(rootEvent,rootParams);
+        
+        $.when(rootEventCount).done(function(eventCount){
+            graphData.count = eventCount.sum().values()[rootEvent];
+            addNode(graphData);
+        });
       });
-
     </script>
-    <script type="text/cq" id="cq">
-        // custom query
-        var main = function() {
-          return Events({
-            from_date: params.from_date,
-            to_date: params.to_date,
-          })
-          // use groupByUser to create a single flow object per user
-          .groupByUser(function(flow, events) {
-            flow = flow || { depth: 0 };
-            flow.current = flow.current || flow;
-            for (var i = 0; i < events.length; i++) {
-              var e = events[i];
-              if (flow.depth === 0 && e.name != params.first_event) {
-                // ignore events until we see the starting event
-                continue;
-              }
-              if (flow.depth === params.max_depth) {
-                // break after we hit the max depth
-                return flow;
-              }
-              flow.depth++;
-              flow.current[e.name] =
-                flow.current[e.name] || {'count': 0, 'next': {}};
-        
-              flow.current[e.name].count++;
-              flow.current = flow.current[e.name].next;
-            }
-            return flow;
-          })
-          .map(function(item) {
-            // delete temporary variables
-            delete item.value.depth;
-            delete item.value.current;
-            // return the flow object
-            return item.value;
-          })
-          .reduce(mixpanel.reducer.object_merge())
-        }
-    </script>
-  This report has been custom-built for by Mixpanel's client solutions team, and is not warranted or maintained alongside the core Mixpanel product. As the end-user, you are solely responsible for any bug fixes, feature updates, and ongoing code changes or iterations.
   </body>
 </html>
